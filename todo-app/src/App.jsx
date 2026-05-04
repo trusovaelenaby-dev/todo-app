@@ -92,7 +92,7 @@ function ConfettiLayer({ trigger }) {
 }
 
 // ─── Task Row ─────────────────────────────────────────────────────────────────
-function TaskRow({ task, done, onToggle, onDelete, index }) {
+function TaskRow({ task, done, onToggle, onDelete, onEdit, index }) {
   const cc = CAT_COLORS[task.category] || CAT_COLORS.other;
   const today = todayKey();
   const isOverdue = task.type==="temporary" && !done && task.dueDate && task.dueDate < today;
@@ -118,6 +118,7 @@ function TaskRow({ task, done, onToggle, onDelete, index }) {
         )}
       </div>
       <span className="cbadge" style={{background:cc.bg, color:cc.text, flexShrink:0}}>{CATS[task.category]}</span>
+      <button className="editbtn" title="Редактировать" onClick={e=>{e.stopPropagation();onEdit(task);}}>✎</button>
       <button className="delbtn" onClick={e=>{e.stopPropagation();onDelete(task.id);}}>×</button>
     </div>
   );
@@ -205,7 +206,82 @@ function AddModal({ onAdd, onClose }) {
   );
 }
 
-// ─── Stats View ───────────────────────────────────────────────────────────────
+// ─── Edit Modal ───────────────────────────────────────────────────────────────
+function EditModal({ task, onSave, onClose }) {
+  const [text, setText]       = useState(task.text);
+  const [cat, setCat]         = useState(task.category);
+  const [type, setType]       = useState(task.type);
+  const [dueDate, setDueDate] = useState(task.dueDate || todayKey());
+
+  const submit = () => {
+    if (!text.trim()) return;
+    onSave({
+      ...task,
+      text: text.trim(),
+      category: cat,
+      type,
+      ...(type==="temporary" ? { dueDate } : { dueDate: null }),
+    });
+    onClose();
+  };
+
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={S.modal} onClick={e=>e.stopPropagation()}>
+        <h2 style={S.modalTitle}>Редактировать задачу</h2>
+        <input className="minput" autoFocus placeholder="Название задачи..."
+          value={text} onChange={e=>setText(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&submit()} />
+
+        <div style={S.mrow}>
+          <div style={S.mlabel}>Категория</div>
+          <div style={S.bgroup}>
+            {Object.entries(CATS).map(([id,lbl])=>(
+              <button key={id} className={`sb ${cat===id?"sb-a":""}`} onClick={()=>setCat(id)}>{lbl}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={S.mrow}>
+          <div style={S.mlabel}>Подраздел</div>
+          <div style={S.bgroup}>
+            <button className={`sb wide ${type==="permanent"?"sb-a":""}`} onClick={()=>setType("permanent")}>
+              🔁 Постоянная
+            </button>
+            <button className={`sb wide ${type==="temporary"?"sb-a":""}`} onClick={()=>setType("temporary")}>
+              ⏳ Временная
+            </button>
+          </div>
+        </div>
+
+        {type==="temporary" && (
+          <div style={S.mrow}>
+            <div style={S.mlabel}>Дата выполнения</div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <input
+                type="date"
+                className="dinput"
+                style={{fontSize:14, padding:"8px 12px", borderRadius:8}}
+                value={dueDate}
+                onChange={e=>setDueDate(e.target.value)}
+              />
+              <span style={{fontSize:12, color:"#8b7355"}}>
+                {dueDate === todayKey() ? "сегодня" : fmtDay(dueDate)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div style={S.mfooter}>
+          <button className="mbtn-cancel" onClick={onClose}>Отмена</button>
+          <button className="mbtn-add" onClick={submit}>Сохранить →</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function StatsView({ tasks, completions }) {
   const [from, setFrom] = useState(daysAgo(13));
   const [to, setTo]     = useState(todayKey());
@@ -405,6 +481,7 @@ export default function App() {
   const [completions, setCompl]   = useState(() => load("tdcompl-v3", {}));
   const [view, setView]           = useState("today");
   const [showModal, setShowModal] = useState(false);
+  const [editTask, setEditTask]   = useState(null);
   const [confetti, setConfetti]   = useState(null);
 
   useEffect(() => { save("tdtasks-v3", tasks); }, [tasks]);
@@ -445,7 +522,10 @@ export default function App() {
     setTasks(prev=>[t,...prev]);
   }, [today]);
 
-  const delTask = useCallback(id => setTasks(p=>p.filter(t=>t.id!==id)), []);
+  const delTask  = useCallback(id => setTasks(p=>p.filter(t=>t.id!==id)), []);
+  const saveTask = useCallback((updated) => {
+    setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
+  }, []);
 
   const totalToday = permTasks.length + tempActive.length + tempDoneToday.length;
   const doneToday  = permTasks.filter(t=>isPDone(t.id)).length + tempDoneToday.length;
@@ -456,6 +536,7 @@ export default function App() {
       <style>{CSS}</style>
       <ConfettiLayer trigger={confetti} />
       {showModal && <AddModal onAdd={addTask} onClose={()=>setShowModal(false)} />}
+      {editTask  && <EditModal task={editTask} onSave={saveTask} onClose={()=>setEditTask(null)} />}
 
       <div style={S.paper}>
         <div style={S.hdr}>
@@ -494,7 +575,7 @@ export default function App() {
                 {permTasks.length===0
                   ? <Empty text="Нет постоянных задач — нажмите ＋ чтобы добавить" />
                   : permTasks.map((t,i)=>(
-                      <TaskRow key={t.id} task={t} done={isPDone(t.id)} onToggle={togglePerm} onDelete={delTask} index={i+1} />
+                      <TaskRow key={t.id} task={t} done={isPDone(t.id)} onToggle={togglePerm} onDelete={delTask} onEdit={setEditTask} index={i+1} />
                     ))
                 }
               </Section>
@@ -507,10 +588,10 @@ export default function App() {
                   ? <Empty text="Нет временных задач на сегодня — нажмите ＋ чтобы добавить" />
                   : <>
                       {tempActive.map((t,i)=>(
-                        <TaskRow key={t.id} task={t} done={false} onToggle={toggleTemp} onDelete={delTask} index={i+1} />
+                        <TaskRow key={t.id} task={t} done={false} onToggle={toggleTemp} onDelete={delTask} onEdit={setEditTask} index={i+1} />
                       ))}
                       {tempDoneToday.map((t,i)=>(
-                        <TaskRow key={t.id} task={t} done={true} onToggle={()=>{}} onDelete={delTask} index={tempActive.length+i+1} />
+                        <TaskRow key={t.id} task={t} done={true} onToggle={()=>{}} onDelete={delTask} onEdit={setEditTask} index={tempActive.length+i+1} />
                       ))}
                     </>
                 }
@@ -523,7 +604,7 @@ export default function App() {
                   {tempFuture
                     .slice().sort((a,b)=>a.dueDate.localeCompare(b.dueDate))
                     .map((t,i)=>(
-                      <TaskRow key={t.id} task={t} done={false} onToggle={()=>{}} onDelete={delTask} index={i+1} />
+                      <TaskRow key={t.id} task={t} done={false} onToggle={()=>{}} onDelete={delTask} onEdit={setEditTask} index={i+1} />
                     ))
                   }
                 </Section>
@@ -568,7 +649,9 @@ const CSS = `
 
 .cbadge { font-family:'IBM Plex Mono',monospace; font-size:10px; padding:2px 8px; border-radius:20px; flex-shrink:0; }
 .delbtn { opacity:0; background:none; border:none; cursor:pointer; font-size:20px; color:#c07b5a; transition:opacity .2s; padding:0 2px; flex-shrink:0; line-height:1; }
-.tr:hover .delbtn { opacity:1; }
+.editbtn { opacity:0; background:none; border:none; cursor:pointer; font-size:15px; color:#8b7355; transition:opacity .2s, color .2s; padding:0 3px; flex-shrink:0; line-height:1; }
+.tr:hover .delbtn, .tr:hover .editbtn { opacity:1; }
+.editbtn:hover { color:#3d2c1e; }
 
 .fab {
   width:46px; height:46px; border-radius:50%; background:#3d2c1e; color:#f5f0e8;
