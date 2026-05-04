@@ -94,11 +94,29 @@ function ConfettiLayer({ trigger }) {
 // ─── Task Row ─────────────────────────────────────────────────────────────────
 function TaskRow({ task, done, onToggle, onDelete }) {
   const cc = CAT_COLORS[task.category] || CAT_COLORS.other;
+  const today = todayKey();
+  const isOverdue = task.type==="temporary" && !done && task.dueDate && task.dueDate < today;
+  const isFuture  = task.type==="temporary" && !done && task.dueDate && task.dueDate > today;
   return (
-    <div className={`tr ${done?"tr-done":""}`} onClick={(e)=>onToggle(task.id,e)}>
+    <div className={`tr ${done?"tr-done":""} ${isOverdue?"tr-overdue":""}`} onClick={(e)=>onToggle(task.id,e)}>
       <div className={`chk ${done?"chk-on":""}`}>{done && "✓"}</div>
-      <span className={`tt ${done?"tt-s":""}`}>{task.text}</span>
-      <span className="cbadge" style={{background:cc.bg, color:cc.text}}>{CATS[task.category]}</span>
+      <div style={{flex:1,minWidth:0}}>
+        <span className={`tt ${done?"tt-s":""}`}>{task.text}</span>
+        {task.dueDate && (
+          <div style={{marginTop:3}}>
+            <span style={{
+              fontSize:10, padding:"2px 7px", borderRadius:10, display:"inline-flex", alignItems:"center", gap:3,
+              background: isOverdue?"#fde8e8": isFuture?"#e8f0ff": done?"#e8f5e9":"#fff3e0",
+              color: isOverdue?"#c0392b": isFuture?"#2d4fa3": done?"#2e6e3a":"#8b5a00",
+              border: `1px solid ${isOverdue?"#f5c6c6": isFuture?"#b8d0f8": done?"#b8e0bc":"#f0d8a8"}`,
+            }}>
+              {isOverdue ? "⚠ просрочено · " : isFuture ? "🗓 запланировано · " : done ? "✓ выполнено · " : "📅 "}
+              {fmtDay(task.dueDate)}
+            </span>
+          </div>
+        )}
+      </div>
+      <span className="cbadge" style={{background:cc.bg, color:cc.text, flexShrink:0}}>{CATS[task.category]}</span>
       <button className="delbtn" onClick={e=>{e.stopPropagation();onDelete(task.id);}}>×</button>
     </div>
   );
@@ -106,13 +124,14 @@ function TaskRow({ task, done, onToggle, onDelete }) {
 
 // ─── Add Modal ────────────────────────────────────────────────────────────────
 function AddModal({ onAdd, onClose }) {
-  const [text, setText] = useState("");
-  const [cat, setCat]   = useState("personal");
-  const [type, setType] = useState("temporary");
+  const [text, setText]     = useState("");
+  const [cat, setCat]       = useState("personal");
+  const [type, setType]     = useState("temporary");
+  const [dueDate, setDueDate] = useState(todayKey());
 
   const submit = () => {
     if (!text.trim()) return;
-    onAdd({ text: text.trim(), category: cat, type });
+    onAdd({ text: text.trim(), category: cat, type, dueDate: type==="temporary" ? dueDate : null });
     onClose();
   };
 
@@ -145,10 +164,35 @@ function AddModal({ onAdd, onClose }) {
           </div>
         </div>
 
+        {type==="temporary" && (
+          <div style={S.mrow}>
+            <div style={S.mlabel}>Дата выполнения</div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <input
+                type="date"
+                className="dinput"
+                style={{fontSize:14, padding:"8px 12px", borderRadius:8, width:"auto"}}
+                value={dueDate}
+                min={todayKey()}
+                onChange={e=>setDueDate(e.target.value)}
+              />
+              <span style={{fontSize:12, color:"#8b7355"}}>
+                {dueDate === todayKey() ? "сегодня" :
+                  dueDate === (() => { const d=new Date(); d.setDate(d.getDate()+1); return d.toISOString().split("T")[0]; })()
+                    ? "завтра"
+                    : fmtDay(dueDate)
+                }
+              </span>
+            </div>
+          </div>
+        )}
+
         <div style={S.mhint}>
           {type==="permanent"
             ? "Появляется каждый день заново. Выполнение сбрасывается в полночь."
-            : "Исчезает после выполнения. Отображается до завершения."}
+            : dueDate === todayKey()
+              ? "Задача отображается сегодня."
+              : `Задача появится ${fmtDay(dueDate)} и будет ждать выполнения.`}
         </div>
 
         <div style={S.mfooter}>
@@ -367,7 +411,8 @@ export default function App() {
 
   const today = todayKey();
   const permTasks     = tasks.filter(t=>t.type==="permanent");
-  const tempActive    = tasks.filter(t=>t.type==="temporary" && !t.done);
+  const tempActive    = tasks.filter(t=>t.type==="temporary" && !t.done && (!t.dueDate || t.dueDate <= today));
+  const tempFuture    = tasks.filter(t=>t.type==="temporary" && !t.done && t.dueDate && t.dueDate > today);
   const tempDoneToday = tasks.filter(t=>t.type==="temporary" && t.done && t.doneAt===today);
 
   const isPDone = id => !!completions[today]?.[id];
@@ -391,10 +436,10 @@ export default function App() {
     }));
   }, [today, fire]);
 
-  const addTask = useCallback(({ text, category, type }) => {
+  const addTask = useCallback(({ text, category, type, dueDate }) => {
     const t = {
       id:`t${Date.now()}`, text, category, type, createdAt: today,
-      ...(type==="temporary" ? {done:false, doneAt:null} : {}),
+      ...(type==="temporary" ? {done:false, doneAt:null, dueDate: dueDate||today} : {}),
     };
     setTasks(prev=>[t,...prev]);
   }, [today]);
@@ -454,11 +499,11 @@ export default function App() {
               </Section>
 
               <Section icon="⏳" title="Временные"
-                subtitle="Отображаются до выполнения, затем скрываются"
+                subtitle="Задачи на сегодня и просроченные"
                 done={tempDoneToday.length}
                 total={tempActive.length+tempDoneToday.length}>
                 {tempActive.length===0 && tempDoneToday.length===0
-                  ? <Empty text="Нет временных задач — нажмите ＋ чтобы добавить" />
+                  ? <Empty text="Нет временных задач на сегодня — нажмите ＋ чтобы добавить" />
                   : <>
                       {tempActive.map(t=>(
                         <TaskRow key={t.id} task={t} done={false} onToggle={toggleTemp} onDelete={delTask} />
@@ -469,6 +514,19 @@ export default function App() {
                     </>
                 }
               </Section>
+
+              {tempFuture.length > 0 && (
+                <Section icon="🗓" title="Запланировано"
+                  subtitle="Задачи появятся в указанную дату"
+                  done={0} total={tempFuture.length}>
+                  {tempFuture
+                    .slice().sort((a,b)=>a.dueDate.localeCompare(b.dueDate))
+                    .map(t=>(
+                      <TaskRow key={t.id} task={t} done={false} onToggle={()=>{}} onDelete={delTask} />
+                    ))
+                  }
+                </Section>
+              )}
             </>
           ) : (
             <StatsView tasks={tasks} completions={completions} />
@@ -491,6 +549,8 @@ const CSS = `
 }
 .tr:last-child { border-bottom:none; }
 .tr:hover { background:#fef9ee; transform:translateX(3px); }
+.tr.tr-overdue { background:#fff8f8; }
+.tr.tr-overdue:hover { background:#fff0f0; }
 .tr.tr-done { cursor:default; }
 .tr.tr-done:hover { transform:none; background:#fffdf7; }
 
