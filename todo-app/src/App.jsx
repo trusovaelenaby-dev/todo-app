@@ -92,13 +92,14 @@ function ConfettiLayer({ trigger }) {
 }
 
 // ─── Task Row ─────────────────────────────────────────────────────────────────
-function TaskRow({ task, done, onToggle, onDelete }) {
+function TaskRow({ task, done, onToggle, onDelete, index }) {
   const cc = CAT_COLORS[task.category] || CAT_COLORS.other;
   const today = todayKey();
   const isOverdue = task.type==="temporary" && !done && task.dueDate && task.dueDate < today;
   const isFuture  = task.type==="temporary" && !done && task.dueDate && task.dueDate > today;
   return (
     <div className={`tr ${done?"tr-done":""} ${isOverdue?"tr-overdue":""}`} onClick={(e)=>onToggle(task.id,e)}>
+      <div className="task-num">{index}</div>
       <div className={`chk ${done?"chk-on":""}`}>{done && "✓"}</div>
       <div style={{flex:1,minWidth:0}}>
         <span className={`tt ${done?"tt-s":""}`}>{task.text}</span>
@@ -492,8 +493,8 @@ export default function App() {
                 done={permTasks.filter(t=>isPDone(t.id)).length} total={permTasks.length}>
                 {permTasks.length===0
                   ? <Empty text="Нет постоянных задач — нажмите ＋ чтобы добавить" />
-                  : permTasks.map(t=>(
-                      <TaskRow key={t.id} task={t} done={isPDone(t.id)} onToggle={togglePerm} onDelete={delTask} />
+                  : permTasks.map((t,i)=>(
+                      <TaskRow key={t.id} task={t} done={isPDone(t.id)} onToggle={togglePerm} onDelete={delTask} index={i+1} />
                     ))
                 }
               </Section>
@@ -505,11 +506,11 @@ export default function App() {
                 {tempActive.length===0 && tempDoneToday.length===0
                   ? <Empty text="Нет временных задач на сегодня — нажмите ＋ чтобы добавить" />
                   : <>
-                      {tempActive.map(t=>(
-                        <TaskRow key={t.id} task={t} done={false} onToggle={toggleTemp} onDelete={delTask} />
+                      {tempActive.map((t,i)=>(
+                        <TaskRow key={t.id} task={t} done={false} onToggle={toggleTemp} onDelete={delTask} index={i+1} />
                       ))}
-                      {tempDoneToday.map(t=>(
-                        <TaskRow key={t.id} task={t} done={true} onToggle={()=>{}} onDelete={delTask} />
+                      {tempDoneToday.map((t,i)=>(
+                        <TaskRow key={t.id} task={t} done={true} onToggle={()=>{}} onDelete={delTask} index={tempActive.length+i+1} />
                       ))}
                     </>
                 }
@@ -521,8 +522,8 @@ export default function App() {
                   done={0} total={tempFuture.length}>
                   {tempFuture
                     .slice().sort((a,b)=>a.dueDate.localeCompare(b.dueDate))
-                    .map(t=>(
-                      <TaskRow key={t.id} task={t} done={false} onToggle={()=>{}} onDelete={delTask} />
+                    .map((t,i)=>(
+                      <TaskRow key={t.id} task={t} done={false} onToggle={()=>{}} onDelete={delTask} index={i+1} />
                     ))
                   }
                 </Section>
@@ -549,7 +550,8 @@ const CSS = `
 }
 .tr:last-child { border-bottom:none; }
 .tr:hover { background:#fef9ee; transform:translateX(3px); }
-.tr.tr-overdue { background:#fff8f8; }
+.task-num { width:18px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#c4a97d; flex-shrink:0; text-align:right; user-select:none; }
+.tr-done .task-num { opacity:.4; }
 .tr.tr-overdue:hover { background:#fff0f0; }
 .tr.tr-done { cursor:default; }
 .tr.tr-done:hover { transform:none; background:#fffdf7; }
