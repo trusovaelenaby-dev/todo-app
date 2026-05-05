@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { supabase } from "./supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const todayKey = () => new Date().toISOString().split("T")[0];
@@ -18,13 +19,39 @@ const SAMPLES = [
   { id:"s5", text:"Купить подарок другу 🎁", category:"personal", type:"temporary", createdAt:todayKey(), done:false, doneAt:null, dueDate:todayKey() },
 ];
 
-// ─── Storage ──────────────────────────────────────────────────────────────────
-function load(key, fallback) {
-  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
-  catch { return fallback; }
+// ─── Supabase DB helpers ──────────────────────────────────────────────────────
+async function dbLoadTasks(userId) {
+  const { data, error } = await supabase.from("tasks").select("data").eq("user_id", userId);
+  if (error) { console.error(error); return []; }
+  return data.map(r => r.data);
 }
-function save(key, val) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) { console.warn(e); }
+async function dbLoadCompletions(userId) {
+  const { data, error } = await supabase.from("completions").select("task_id,date").eq("user_id", userId);
+  if (error) { console.error(error); return {}; }
+  const compl = {};
+  data.forEach(r => {
+    if (!compl[r.date]) compl[r.date] = {};
+    compl[r.date][r.task_id] = true;
+  });
+  return compl;
+}
+async function dbUpsertTask(task, userId) {
+  const { error } = await supabase.from("tasks").upsert({ id: task.id, user_id: userId, data: task });
+  if (error) console.error("upsertTask:", error);
+}
+async function dbDeleteTask(taskId) {
+  const { error } = await supabase.from("tasks").delete().eq("id", taskId);
+  if (error) console.error("deleteTask:", error);
+}
+async function dbSetCompletion(userId, taskId, date, completed) {
+  if (completed) {
+    const { error } = await supabase.from("completions").upsert({ user_id: userId, task_id: taskId, date });
+    if (error) console.error("setCompletion:", error);
+  } else {
+    const { error } = await supabase.from("completions").delete()
+      .eq("user_id", userId).eq("task_id", taskId).eq("date", date);
+    if (error) console.error("delCompletion:", error);
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -606,17 +633,42 @@ function Empty({text}){return<div style={{padding:"18px 16px",textAlign:"center"
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tasks,setTasks]       = useState(()=>load("tdtasks-v4",SAMPLES));
-  const [completions,setCompl] = useState(()=>load("tdcompl-v4",{}));
+  const [user, setUser]        = useState(null);
+  const [tasks, setTasks]      = useState([]);
+  const [completions,setCompl] = useState({});
+  const [loading, setLoading]  = useState(true);
   const [view,setView]         = useState("today");
   const [showModal,setShowModal]= useState(false);
   const [editTask,setEditTask] = useState(null);
   const [confetti,setConfetti] = useState(null);
+  const userRef = useRef(null);
+  userRef.current = user;
 
-  useEffect(()=>{save("tdtasks-v4",tasks);},[tasks]);
-  useEffect(()=>{save("tdcompl-v4",completions);},[completions]);
+  // ── Auth listener ──
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (!session) setLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (!session) { setTasks([]); setCompl({}); setLoading(false); }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
-  const today=todayKey();
+  // ── Load data from Supabase on login ──
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    Promise.all([dbLoadTasks(user.id), dbLoadCompletions(user.id)]).then(([t, c]) => {
+      setTasks(t.length > 0 ? t : SAMPLES.map(s => ({ ...s, createdAt: todayKey() })));
+      setCompl(c);
+      setLoading(false);
+    });
+  }, [user]);
+
+  const today = todayKey();
 
   // Only show non-done, non-paused permanent tasks
   const permTasks    = tasks.filter(t=>t.type==="permanent" && !isPausedOn(t,today) && !completions[today]?.[t.id]);
@@ -633,31 +685,54 @@ export default function App() {
   const fire=useCallback((e)=>{setConfetti({x:e?.clientX??window.innerWidth/2,y:e?.clientY??window.innerHeight/2,ts:Date.now()});},[]);
 
   const togglePerm=useCallback((id,e)=>{
+    const uid=userRef.current?.id; if(!uid) return;
     const wasOff=!completions[today]?.[id];
     setCompl(prev=>({...prev,[today]:{...prev[today],[id]:wasOff}}));
+    dbSetCompletion(uid,id,today,wasOff);
     if(wasOff) fire(e);
   },[completions,today,fire]);
 
   const toggleTemp=useCallback((id,e)=>{
+    const uid=userRef.current?.id; if(!uid) return;
     setTasks(prev=>prev.map(t=>{
       if(t.id!==id||t.done) return t;
       fire(e);
-      setCompl(c=>({...c,[today]:{...c[today],[id]:true}}));
-      return{...t,done:true,doneAt:today};
+      const updated={...t,done:true,doneAt:today};
+      dbUpsertTask(updated,uid);
+      dbSetCompletion(uid,id,today,true);
+      return updated;
     }));
   },[today,fire]);
 
   const addTask=useCallback(({text,category,type,dueDate})=>{
+    const uid=userRef.current?.id; if(!uid) return;
     const t={
       id:`t${Date.now()}`,text,category,type,createdAt:today,
       ...(type==="temporary"?{done:false,doneAt:null,dueDate:dueDate||today}:
         {paused:false,pauseFrom:null,pauseTo:null,pauseReason:""}),
     };
     setTasks(prev=>[t,...prev]);
+    dbUpsertTask(t,uid);
   },[today]);
 
-  const delTask =useCallback(id=>setTasks(p=>p.filter(t=>t.id!==id)),[]);
-  const saveTask=useCallback(updated=>setTasks(prev=>prev.map(t=>t.id===updated.id?updated:t)),[]);
+  const delTask=useCallback(id=>{
+    setTasks(p=>p.filter(t=>t.id!==id));
+    dbDeleteTask(id);
+  },[]);
+
+  const saveTask=useCallback(updated=>{
+    const uid=userRef.current?.id; if(!uid) return;
+    setTasks(prev=>prev.map(t=>t.id===updated.id?updated:t));
+    dbUpsertTask(updated,uid);
+  },[]);
+
+  // ── Loading gate ──
+  if (loading) return (
+    <div style={{minHeight:"100vh",background:"#f5f0e8",display:"flex",alignItems:"center",
+      justifyContent:"center",fontFamily:"IBM Plex Mono,monospace",color:"#8b7355",fontSize:14}}>
+      Загрузка задач...
+    </div>
+  );
 
   return (
     <div style={S.root}>
@@ -673,7 +748,11 @@ export default function App() {
             <h1 style={S.htitle}>Мои задачи</h1>
             <div style={S.hdate}>{fmtWeekday(today)}</div>
           </div>
-          <button className="fab" onClick={()=>setShowModal(true)} title="Добавить задачу">＋</button>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8}}>
+            <button className="fab" onClick={()=>setShowModal(true)} title="Добавить задачу">＋</button>
+            <button className="signout-btn" onClick={()=>supabase.auth.signOut()}
+              title={`Выйти (${user.email})`}>⏏</button>
+          </div>
         </div>
 
         <div style={S.tabs}>
@@ -798,6 +877,8 @@ const CSS=`
 .tr:hover .editbtn,.tr:hover .delbtn{opacity:1;}
 .editbtn:hover{color:#3d2c1e;}
 
+.signout-btn{width:32px;height:32px;border-radius:50%;background:#f5f0e8;color:#8b7355;border:1.5px solid #d9cdb8;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s,color .2s;}
+.signout-btn:hover{background:#fde8e8;color:#c0392b;border-color:#f5c6c6;}
 .fab{width:46px;height:46px;border-radius:50%;background:#3d2c1e;color:#f5f0e8;border:none;font-size:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s,transform .2s;line-height:1;flex-shrink:0;}
 .fab:hover{background:#5a3d28;transform:scale(1.1) rotate(90deg);}
 .fab:active{transform:scale(.95);}
