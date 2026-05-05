@@ -433,7 +433,7 @@ function StatsView({ tasks, completions }) {
 }
 
 // ─── Journal View ─────────────────────────────────────────────────────────────
-function JournalView({ tasks, completions }) {
+function JournalView({ tasks, completions, onEdit, onDelete }) {
   const [date, setDate] = useState(todayKey());
 
   // Permanent tasks active on this date (not paused)
@@ -459,8 +459,7 @@ function JournalView({ tasks, completions }) {
   const JRow = ({task,done:d,paused:p,idx})=>{
     const cc=CAT_COLORS[task.category]||CAT_COLORS.other;
     return(
-      <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",
-        borderBottom:"1px dashed #d9cdb8",background:d?"#f9fdf9":p?"#fffbf0":"#fffdf7"}}>
+      <div className={`jrow ${d?"jrow-done":""} ${p?"jrow-paused":""}`}>
         <div style={{width:18,fontSize:11,color:"#c4a97d",textAlign:"right",flexShrink:0}}>{idx}</div>
         <div style={{width:22,height:22,border:`2px solid ${d?"#3d2c1e":p?"#e6a817":"#c4a97d"}`,borderRadius:5,
           flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,
@@ -481,6 +480,8 @@ function JournalView({ tasks, completions }) {
           color:task.type==="permanent"?"#e65100":"#6a1b9a"}}>
           {task.type==="permanent"?"🔁":"⏳"}
         </span>
+        <button className="editbtn" title="Редактировать" onClick={e=>{e.stopPropagation();onEdit(task);}}>✎</button>
+        <button className="delbtn" onClick={e=>{e.stopPropagation();onDelete(task.id);}}>×</button>
       </div>
     );
   };
@@ -711,7 +712,7 @@ export default function App() {
                     ?<Empty text="Нет постоянных задач — нажмите ＋ чтобы добавить"/>
                     :permTasks.map((t,i)=>(
                       <TaskRow key={t.id} task={t} done={false} paused={false}
-                        onToggle={togglePerm} onDelete={delTask} onEdit={setEditTask} index={i+1}/>
+                        onToggle={togglePerm} index={i+1}/>
                     ))
                 }
               </Section>
@@ -723,7 +724,7 @@ export default function App() {
                   ?<Empty text="Нет временных задач на сегодня — нажмите ＋ чтобы добавить"/>
                   :tempActive.map((t,i)=>(
                     <TaskRow key={t.id} task={t} done={false} paused={false}
-                      onToggle={toggleTemp} onDelete={delTask} onEdit={setEditTask} index={i+1}/>
+                      onToggle={toggleTemp} index={i+1}/>
                   ))
                 }
               </Section>
@@ -734,7 +735,7 @@ export default function App() {
                   done={0} total={tempFuture.length}>
                   {tempFuture.slice().sort((a,b)=>a.dueDate.localeCompare(b.dueDate)).map((t,i)=>(
                     <TaskRow key={t.id} task={t} done={false} paused={false}
-                      onToggle={()=>{}} onDelete={delTask} onEdit={setEditTask} index={i+1}/>
+                      onToggle={()=>{}} index={i+1}/>
                   ))}
                 </Section>
               )}
@@ -745,13 +746,13 @@ export default function App() {
                   done={0} total={permPaused.length}>
                   {permPaused.map((t,i)=>(
                     <TaskRow key={t.id} task={t} done={false} paused={true}
-                      onToggle={()=>{}} onDelete={delTask} onEdit={setEditTask} index={i+1}/>
+                      onToggle={()=>{}} index={i+1}/>
                   ))}
                 </Section>
               )}
             </>
           )}
-          {view==="journal"&&<JournalView tasks={tasks} completions={completions}/>}
+          {view==="journal"&&<JournalView tasks={tasks} completions={completions} onEdit={setEditTask} onDelete={delTask}/>}
           {view==="stats"&&<StatsView tasks={tasks} completions={completions}/>}
         </div>
       </div>
@@ -764,7 +765,13 @@ const CSS=`
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;}
 
-.tr{display:flex;align-items:center;gap:10px;padding:13px 15px;background:#fffdf7;border-bottom:1px dashed #d9cdb8;cursor:pointer;transition:background .18s,transform .15s;}
+.jrow{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px dashed #d9cdb8;background:#fffdf7;transition:background .15s;}
+.jrow:last-child{border-bottom:none;}
+.jrow:hover{background:#fef9ee;}
+.jrow:hover .editbtn,.jrow:hover .delbtn{opacity:1;}
+.jrow-done{background:#f9fdf9!important;}
+.jrow-paused{background:#fffbf0!important;}
+
 .tr:last-child{border-bottom:none;}
 .tr:hover{background:#fef9ee;transform:translateX(3px);}
 .tr.tr-done{cursor:default;}
